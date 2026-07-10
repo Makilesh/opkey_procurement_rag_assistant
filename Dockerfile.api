@@ -1,0 +1,27 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    HF_HOME=/cache/hf \
+    HUGGINGFACE_HUB_CACHE=/cache/hf/hub
+
+WORKDIR /app
+
+# CPU-only torch first so sentence-transformers doesn't pull the CUDA build.
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY api ./api
+COPY core ./core
+COPY eval ./eval
+COPY data ./data
+
+# Embedding/reranker models are downloaded on first boot into the hf_cache
+# volume (documented in README) to keep this image small; they persist across
+# rebuilds and restarts.
+
+EXPOSE 8000
+
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -5,8 +5,11 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from fastapi import FastAPI
+from slowapi.errors import RateLimitExceeded
+from slowapi.extension import _rate_limit_exceeded_handler
 
-from api.routes import health
+from api.deps import limiter
+from api.routes import auth, health
 from core.config import settings
 from core.logging import setup_logging
 
@@ -31,4 +34,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 app.include_router(health.router, tags=["health"])
+app.include_router(auth.router, tags=["auth"])

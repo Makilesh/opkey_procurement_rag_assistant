@@ -9,9 +9,10 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.extension import _rate_limit_exceeded_handler
 
 from api.deps import limiter
-from api.routes import auth, health
+from api.routes import auth, health, sessions
 from core.config import settings
 from core.logging import setup_logging
+from core.sessions import SessionStore
 
 logger = logging.getLogger("api")
 
@@ -20,8 +21,9 @@ logger = logging.getLogger("api")
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     setup_logging()
     logger.info("starting api service")
-    # Later milestones attach shared state here (index, session store, models).
+    # Later milestones attach shared state here (index, retrieval models).
     app.state.index = None
+    app.state.sessions = SessionStore.from_settings()
     yield
     logger.info("api service shutting down")
 
@@ -39,3 +41,4 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.include_router(health.router, tags=["health"])
 app.include_router(auth.router, tags=["auth"])
+app.include_router(sessions.router, tags=["sessions"])

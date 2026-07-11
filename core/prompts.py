@@ -36,6 +36,11 @@ resolve pronouns and implicit subjects.
 Rules:
 - Output ONLY the rewritten query. No preamble, no quotes, no explanation.
 - If the message is already a standalone query, return it unchanged.
+- Paraphrase MINIMALLY: reuse only words that already appear in the
+  conversation or the latest message. The only words you may add are the
+  noun phrase a pronoun resolves to (e.g. "it" -> "purchase requisition").
+  Never introduce new topic words of your own — every invented term becomes
+  a high-weight search term and skews retrieval.
 - Keep it short and keyword-rich (it feeds a search engine, not a chat).
 """
 

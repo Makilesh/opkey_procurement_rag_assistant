@@ -56,6 +56,27 @@
     "expected_pages": [196, 197]
   },
   {
+    "id": "richmond-sole-vs-single-source",
+    "turns": ["What is the difference between sole source and single source in the University of Richmond procurement policy?"],
+    "expected_answer_keywords": ["sole", "single"],
+    "expected_source_filename": "richmond_procurement_policy.pdf",
+    "expected_pages": [3]
+  },
+  {
+    "id": "oracle-blanket-purchase-agreement",
+    "turns": ["What is a blanket purchase agreement in Oracle Purchasing and when would you use one?"],
+    "expected_answer_keywords": ["blanket"],
+    "expected_source_filename": "oracle_fusion_using_procurement_26b.pdf",
+    "expected_pages": [218, 353, 373]
+  },
+  {
+    "id": "oracle-supplier-registration",
+    "turns": ["How does the supplier registration process work in Oracle Procurement?"],
+    "expected_answer_keywords": ["registration"],
+    "expected_source_filename": "oracle_fusion_using_procurement_26b.pdf",
+    "expected_pages": [25, 26, 27, 28, 29, 30]
+  },
+  {
     "id": "multiturn-oracle-requisition",
     "turns": [
       "What is a purchase requisition in Oracle Procurement?",

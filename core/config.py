@@ -8,6 +8,10 @@ class Settings(BaseSettings):
 
     # --- secrets / auth ---
     gemini_api_key: str = ""
+    # Optional comma-separated key rotation (first = primary). Each free-tier
+    # key is its own project with its own quotas, so the LLM wrapper exhausts
+    # a model across ALL keys before falling back to the next model.
+    gemini_api_keys: str = ""
     jwt_secret: str = "change-me-in-env"
     jwt_ttl_minutes: int = 60
     demo_username: str = "demo"
@@ -21,11 +25,15 @@ class Settings(BaseSettings):
     # --- models ---
     model_main: str = "gemini/gemini-3.5-flash"  # ⚠ VERIFY against LiteLLM Gemini provider docs
     model_cheap: str = "gemini/gemini-3.1-flash-lite"  # ⚠ VERIFY against LiteLLM Gemini provider docs
-    # Fallback chain tried in order when a model's budget is spent or it 429s.
-    # All ids probe-verified against this project's AI Studio quota dashboard.
+    # Fallback chain tried in order when a model's budget is spent or it 429s
+    # (best model first). All ids probe-verified against AI Studio.
     model_fallbacks: str = (
-        "gemini/gemini-3-flash-preview,gemini/gemini-2.5-flash,gemini/gemini-2.5-flash-lite"
+        "gemini/gemini-3-flash-preview,gemini/gemini-2.5-flash,"
+        "gemini/gemini-3.1-flash-lite,gemini/gemini-2.5-flash-lite"
     )
+    # LLM-as-judge model — deliberately NOT the answer model, so the eval isn't
+    # a model grading its own output.
+    model_judge: str = "gemini/gemini-2.5-flash"
     # Free-tier budgets from the AI Studio rate-limit dashboard (2026-07-11):
     # 3.5-flash = 5 RPM / 20 RPD, 3.1-flash-lite = 15 RPM / 500 RPD.
     rpm_main: int = 5

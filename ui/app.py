@@ -140,7 +140,7 @@ def respond(
 
 
 def build_app() -> gr.Blocks:
-    with gr.Blocks(title="Opkey Procurement Assistant", theme=gr.themes.Soft()) as demo:
+    with gr.Blocks(title="Opkey Procurement Assistant") as demo:
         token_state = gr.State(None)
         session_state = gr.State("")
 
@@ -157,7 +157,7 @@ def build_app() -> gr.Blocks:
             with gr.Row():
                 session_badge = gr.Markdown("")
                 new_btn = gr.Button("🔄 New Conversation", scale=0)
-            chatbot = gr.Chatbot(type="messages", height=480, show_copy_button=True)
+            chatbot = gr.Chatbot(height=480)  # Gradio 6: messages format is the default
             with gr.Row():
                 msg_box = gr.Textbox(
                     placeholder="Ask about purchase orders, requisitions, approval limits…",

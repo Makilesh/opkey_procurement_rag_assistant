@@ -30,7 +30,7 @@ litellm.suppress_debug_info = True
 # ("Server disconnected"); the httpx transport is reliable.
 litellm.disable_aiohttp_transport = True
 
-Role = Literal["main", "cheap"]
+Role = Literal["main", "cheap", "judge"]
 
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
 
@@ -107,25 +107,34 @@ _budgets: dict[str, ModelBudget] = {}
 
 _models: dict[Role, str] = {
     # ⚠ VERIFY — confirmed against ai.google.dev model list + LiteLLM Gemini
-    # provider docs (July 2026): both are stable model codes.
+    # provider docs (July 2026): all are live model codes.
     "main": settings.model_main,
     "cheap": settings.model_cheap,
+    "judge": settings.model_judge,
 }
 
 
-def budget_for(model: str) -> ModelBudget:
-    if model not in _budgets:
+def api_keys() -> list[str]:
+    """Rotation list (first = primary). Each key is its own project/quota."""
+    keys = [k.strip() for k in settings.gemini_api_keys.split(",") if k.strip()]
+    return keys or [settings.gemini_api_key]
+
+
+def budget_for(model: str, key_index: int) -> ModelBudget:
+    """Budgets are per (model, key): every key is a separate quota project."""
+    slot = f"{model}#{key_index}"
+    if slot not in _budgets:
         rpm, rpd = _FREE_TIER_BUDGETS.get(model, _DEFAULT_BUDGET)
         if model == settings.model_main:
             rpm, rpd = settings.rpm_main, settings.rpd_main
         elif model == settings.model_cheap:
             rpm, rpd = settings.rpm_cheap, settings.rpd_cheap
-        _budgets[model] = ModelBudget(rpm, rpd)
-    return _budgets[model]
+        _budgets[slot] = ModelBudget(rpm, rpd)
+    return _budgets[slot]
 
 
 def _chain(role: Role) -> list[str]:
-    """Primary model for the role, then the shared fallback chain."""
+    """Primary model for the role, then the shared fallback chain (best first)."""
     primary = _models[role]
     fallbacks = [m.strip() for m in settings.model_fallbacks.split(",") if m.strip()]
     return [primary] + [m for m in fallbacks if m != primary]
@@ -143,31 +152,40 @@ async def complete(
     timeout: float = 30.0,
     **kwargs: Any,
 ) -> Any:
-    """One chat completion through the per-model budgets with automatic model
-    fallback: primary → fallback chain → optional Ollama → clean 503.
+    """One chat completion through the per-(model, key) budgets with automatic
+    fallback. A model is exhausted across EVERY api key (each key = its own
+    quota project) before stepping down to the next model in the chain:
+    primary(key1..N) → fallback1(key1..N) → ... → optional Ollama → clean 503.
     Returns a ModelResponse, or an async stream when stream=True."""
     rate_limited = False
     first_error: Exception | None = None
+    keys = api_keys()
     for model in _chain(role):
-        try:
-            await budget_for(model).acquire()
-        except DailyBudgetExceeded:
-            logger.warning("daily budget spent for %s; trying next model", model)
-            rate_limited = True
-            continue
-        try:
-            return await _acompletion(
-                model, messages=messages, stream=stream, timeout=timeout, **kwargs
-            )
-        except Exception as exc:
-            if _is_rate_limit(exc):
-                logger.warning("upstream 429 from %s; falling back", model)
+        for key_index, key in enumerate(keys):
+            try:
+                await budget_for(model, key_index).acquire()
+            except DailyBudgetExceeded:
+                logger.warning("daily budget spent for %s key[%d]; rotating", model, key_index)
                 rate_limited = True
                 continue
-            if first_error is None:
-                first_error = exc
-            logger.warning("model %s failed (%s); falling back", model, type(exc).__name__)
-            continue
+            try:
+                return await _acompletion(
+                    model,
+                    messages=messages,
+                    stream=stream,
+                    timeout=timeout,
+                    api_key=key or None,
+                    **kwargs,
+                )
+            except Exception as exc:
+                if _is_rate_limit(exc):
+                    logger.warning("upstream 429 from %s key[%d]; rotating", model, key_index)
+                    rate_limited = True
+                    continue
+                if first_error is None:
+                    first_error = exc
+                logger.warning("model %s failed (%s); next model", model, type(exc).__name__)
+                break  # non-quota errors repeat on every key — skip to next model
 
     if settings.ollama_fallback_enabled:
         logger.warning("all Gemini models exhausted; falling back to ollama/%s", settings.ollama_model)

@@ -36,9 +36,10 @@ def _page_hit(sources: list[dict[str, Any]], expected_file: str, expected_pages:
 
 
 async def _judge(question: str, context: str, answer: str) -> dict[str, Any] | None:
+    """Strict LLM-as-judge on the dedicated judge model (never the answerer)."""
     try:
         result = await call_structured(
-            "cheap",
+            "judge",
             [
                 {"role": "system", "content": prompts.JUDGE_SYSTEM_PROMPT},
                 {
@@ -53,10 +54,23 @@ async def _judge(question: str, context: str, answer: str) -> dict[str, Any] | N
         faithfulness = int(result["faithfulness"])
         if not (1 <= relevance <= 5 and 1 <= faithfulness <= 5):
             raise ValueError(f"judge scores out of range: {result}")
-        return {"answer_relevance": relevance, "faithfulness": faithfulness}
+        return {
+            "answer_relevance": relevance,
+            "faithfulness": faithfulness,
+            "unsupported_claims": [str(c) for c in result.get("unsupported_claims", [])],
+            "missing_aspects": [str(a) for a in result.get("missing_aspects", [])],
+        }
     except Exception:
         logger.warning("judge failed, marking question unscored", exc_info=True)
         return None
+
+
+def _keyword_coverage(answer: str, keywords: list[str]) -> float | None:
+    """Objective, deterministic metric: fraction of expected keywords present."""
+    if not keywords:
+        return None
+    lowered = answer.lower()
+    return sum(1 for k in keywords if k.lower() in lowered) / len(keywords)
 
 
 async def _answer_final_turn(
@@ -118,6 +132,7 @@ async def run_evaluation(index: IndexStore, store: SessionStore) -> dict[str, An
                     "hit": None,
                     "answer_relevance": None,
                     "faithfulness": None,
+                    "keyword_coverage": None,
                     "answer": "",
                     "notes": "unscored (question failed: quota or upstream error)",
                 }
@@ -137,11 +152,14 @@ async def run_evaluation(index: IndexStore, store: SessionStore) -> dict[str, An
         if expect_refusal:
             refused = not sources
             notes = "refused correctly" if refused else "FAILED to refuse (hallucination risk)"
-        keywords = [k.lower() for k in entry.get("expected_answer_keywords", [])]
-        if keywords:
-            missing = [k for k in keywords if k not in answer.lower()]
-            if missing:
-                notes = (notes + "; " if notes else "") + f"missing keywords: {missing}"
+        keywords = entry.get("expected_answer_keywords", [])
+        coverage = _keyword_coverage(answer, keywords)
+        if coverage is not None and coverage < 1.0:
+            missing = [k for k in keywords if k.lower() not in answer.lower()]
+            notes = (notes + "; " if notes else "") + f"missing keywords: {missing}"
+        if scores and scores["unsupported_claims"]:
+            claims = "; ".join(scores["unsupported_claims"][:2])
+            notes = (notes + "; " if notes else "") + f"unsupported: {claims}"
 
         per_question.append(
             {
@@ -151,6 +169,7 @@ async def run_evaluation(index: IndexStore, store: SessionStore) -> dict[str, An
                 "hit": hit,
                 "answer_relevance": scores["answer_relevance"] if scores else None,
                 "faithfulness": scores["faithfulness"] if scores else None,
+                "keyword_coverage": coverage,
                 "answer": answer,
                 "notes": notes or ("unscored (judge failed)" if scores is None else ""),
             }
@@ -161,10 +180,12 @@ async def run_evaluation(index: IndexStore, store: SessionStore) -> dict[str, An
     hits = [q["hit"] for q in per_question if q["hit"] is not None]
     relevance = [q["answer_relevance"] for q in per_question if q["answer_relevance"] is not None]
     faithfulness = [q["faithfulness"] for q in per_question if q["faithfulness"] is not None]
+    coverages = [q["keyword_coverage"] for q in per_question if q["keyword_coverage"] is not None]
     summary = {
         "hit_rate": round(sum(hits) / len(hits), 3) if hits else 0.0,
         "answer_relevance": round(sum(relevance) / len(relevance), 2) if relevance else 0.0,
         "faithfulness": round(sum(faithfulness) / len(faithfulness), 2) if faithfulness else 0.0,
+        "keyword_coverage": round(sum(coverages) / len(coverages), 3) if coverages else 0.0,
         "llm_calls": total_calls,
         "duration_s": round(time.perf_counter() - started, 1),
         "per_question": per_question,
@@ -185,21 +206,25 @@ def _write_markdown(summary: dict[str, Any]) -> None:
         "# Evaluation Results",
         "",
         f"- **Hit Rate:** {summary['hit_rate']:.0%}",
-        f"- **Answer Relevance (1–5):** {summary['answer_relevance']}",
-        f"- **Faithfulness (1–5):** {summary['faithfulness']}",
+        f"- **Answer Relevance (1–5, strict judge):** {summary['answer_relevance']}",
+        f"- **Faithfulness (1–5, strict judge):** {summary['faithfulness']}",
+        f"- **Keyword Coverage (objective):** {summary['keyword_coverage']:.0%}",
         f"- **LLM calls:** {summary['llm_calls']}  ·  **Duration:** {summary['duration_s']}s",
         "",
-        "| # | Question | Multi-turn | Hit | Relevance | Faithfulness | Notes |",
-        "|---|----------|------------|-----|-----------|--------------|-------|",
+        "| # | Question | Multi-turn | Hit | Relevance | Faithfulness | Keywords | Notes |",
+        "|---|----------|------------|-----|-----------|--------------|----------|-------|",
     ]
     for q in summary["per_question"]:
         hit = "—" if q["hit"] is None else ("✅" if q["hit"] else "❌")
         rel = q["answer_relevance"] if q["answer_relevance"] is not None else "—"
         faith = q["faithfulness"] if q["faithfulness"] is not None else "—"
+        cov = "—" if q["keyword_coverage"] is None else f"{q['keyword_coverage']:.0%}"
         mt = "yes" if q["multi_turn"] else ""
         question = q["question"].replace("|", "\\|")
         notes = (q["notes"] or "").replace("|", "\\|")
-        lines.append(f"| {q['id']} | {question} | {mt} | {hit} | {rel} | {faith} | {notes} |")
+        lines.append(
+            f"| {q['id']} | {question} | {mt} | {hit} | {rel} | {faith} | {cov} | {notes} |"
+        )
     RESULTS_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n".join(lines))
 

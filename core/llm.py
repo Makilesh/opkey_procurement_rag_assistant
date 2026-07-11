@@ -39,6 +39,10 @@ class QuotaExceededError(Exception):
     """LLM quota exhausted after retries (routes map this to a clean 503)."""
 
 
+class DailyBudgetExceeded(Exception):
+    """Internal: a model's client-side RPD budget is spent — skip it, never wait."""
+
+
 def _is_rate_limit(exc: Exception) -> bool:
     """Provider 429s don't always surface as litellm.RateLimitError (e.g.
     VertexAIError wrapping a raw 429), so also match on the error text."""
@@ -48,34 +52,58 @@ def _is_rate_limit(exc: Exception) -> bool:
     return "429" in text or "RESOURCE_EXHAUSTED" in text or "Too Many Requests" in text
 
 
-class SlidingWindowLimiter:
-    """Per-model RPM limiter: asyncio lock + deque of monotonic timestamps.
-    The lock is RELEASED before sleeping, then re-acquired and re-checked, so
-    one sleeper never serializes concurrent requests."""
+class ModelBudget:
+    """Per-model RPM + RPD budget: asyncio lock + deques of monotonic stamps.
+    RPM pacing sleeps until the minute window rolls over (lock RELEASED before
+    sleeping so one sleeper never serializes concurrent requests). A spent RPD
+    budget raises DailyBudgetExceeded immediately — waiting hours makes no
+    sense when a fallback model is available. The day window is rolling 24h
+    (process-local), a conservative approximation of Google's calendar-day."""
 
-    def __init__(self, rpm: int) -> None:
-        self._rpm = rpm
+    def __init__(self, rpm: int, rpd: int) -> None:
+        self.rpm = rpm
+        self.rpd = rpd
         self._lock = asyncio.Lock()
-        self._stamps: deque[float] = deque()
+        self._minute: deque[float] = deque()
+        self._day: deque[float] = deque()
+
+    async def _try_acquire(self) -> float | None:
+        """None = acquired; float = seconds to wait; raises when RPD is spent."""
+        async with self._lock:
+            now = time.monotonic()
+            while self._minute and now - self._minute[0] > 60.0:
+                self._minute.popleft()
+            while self._day and now - self._day[0] > 86400.0:
+                self._day.popleft()
+            if len(self._day) >= self.rpd:
+                raise DailyBudgetExceeded
+            if len(self._minute) < self.rpm:
+                self._minute.append(now)
+                self._day.append(now)
+                return None
+            return 60.0 - (now - self._minute[0]) + 0.05
 
     async def acquire(self) -> None:
         while True:
-            async with self._lock:
-                now = time.monotonic()
-                while self._stamps and now - self._stamps[0] > 60.0:
-                    self._stamps.popleft()
-                if len(self._stamps) < self._rpm:
-                    self._stamps.append(now)
-                    return
-                wait = 60.0 - (now - self._stamps[0]) + 0.05
+            wait = await self._try_acquire()
+            if wait is None:
+                return
             logger.info("rpm limiter: waiting %.1fs", wait)
             await asyncio.sleep(wait)
 
 
-_limiters: dict[Role, SlidingWindowLimiter] = {
-    "main": SlidingWindowLimiter(settings.rpm_main),
-    "cheap": SlidingWindowLimiter(settings.rpm_cheap),
+# Free-tier budgets (RPM, RPD) verified in this project's AI Studio rate-limit
+# dashboard on 2026-07-11. Unknown models get a conservative default.
+_FREE_TIER_BUDGETS: dict[str, tuple[int, int]] = {
+    "gemini/gemini-3.5-flash": (5, 20),
+    "gemini/gemini-3.1-flash-lite": (15, 500),
+    "gemini/gemini-3-flash-preview": (5, 20),
+    "gemini/gemini-2.5-flash": (5, 20),
+    "gemini/gemini-2.5-flash-lite": (10, 20),
 }
+_DEFAULT_BUDGET: tuple[int, int] = (5, 20)
+
+_budgets: dict[str, ModelBudget] = {}
 
 _models: dict[Role, str] = {
     # ⚠ VERIFY — confirmed against ai.google.dev model list + LiteLLM Gemini
@@ -83,6 +111,24 @@ _models: dict[Role, str] = {
     "main": settings.model_main,
     "cheap": settings.model_cheap,
 }
+
+
+def budget_for(model: str) -> ModelBudget:
+    if model not in _budgets:
+        rpm, rpd = _FREE_TIER_BUDGETS.get(model, _DEFAULT_BUDGET)
+        if model == settings.model_main:
+            rpm, rpd = settings.rpm_main, settings.rpd_main
+        elif model == settings.model_cheap:
+            rpm, rpd = settings.rpm_cheap, settings.rpd_cheap
+        _budgets[model] = ModelBudget(rpm, rpd)
+    return _budgets[model]
+
+
+def _chain(role: Role) -> list[str]:
+    """Primary model for the role, then the shared fallback chain."""
+    primary = _models[role]
+    fallbacks = [m.strip() for m in settings.model_fallbacks.split(",") if m.strip()]
+    return [primary] + [m for m in fallbacks if m != primary]
 
 
 async def _acompletion(model: str, **kwargs: Any) -> Any:
@@ -97,37 +143,45 @@ async def complete(
     timeout: float = 30.0,
     **kwargs: Any,
 ) -> Any:
-    """One chat completion through the rate limiter with graceful 429 handling.
+    """One chat completion through the per-model budgets with automatic model
+    fallback: primary → fallback chain → optional Ollama → clean 503.
     Returns a ModelResponse, or an async stream when stream=True."""
-    await _limiters[role].acquire()
-    model = _models[role]
-    try:
-        return await _acompletion(model, messages=messages, stream=stream, timeout=timeout, **kwargs)
-    except Exception as exc:
-        if not _is_rate_limit(exc):
-            raise
-        # Per-minute quota: a short sleep is useless. Back off long enough for
-        # the window to roll over before the single retry.
-        logger.warning("upstream 429 from %s despite limiter; backing off 20s", model)
-        await asyncio.sleep(20.0)
+    rate_limited = False
+    first_error: Exception | None = None
+    for model in _chain(role):
+        try:
+            await budget_for(model).acquire()
+        except DailyBudgetExceeded:
+            logger.warning("daily budget spent for %s; trying next model", model)
+            rate_limited = True
+            continue
         try:
             return await _acompletion(
                 model, messages=messages, stream=stream, timeout=timeout, **kwargs
             )
-        except Exception as retry_exc:
-            if not _is_rate_limit(retry_exc):
-                raise
-            if settings.ollama_fallback_enabled:
-                logger.warning("falling back to ollama/%s", settings.ollama_model)
-                return await _acompletion(
-                    f"ollama/{settings.ollama_model}",
-                    messages=messages,
-                    stream=stream,
-                    timeout=max(timeout, 60.0),
-                    api_base=settings.ollama_base_url,
-                    **kwargs,
-                )
-            raise QuotaExceededError("LLM quota exceeded, retry shortly")
+        except Exception as exc:
+            if _is_rate_limit(exc):
+                logger.warning("upstream 429 from %s; falling back", model)
+                rate_limited = True
+                continue
+            if first_error is None:
+                first_error = exc
+            logger.warning("model %s failed (%s); falling back", model, type(exc).__name__)
+            continue
+
+    if settings.ollama_fallback_enabled:
+        logger.warning("all Gemini models exhausted; falling back to ollama/%s", settings.ollama_model)
+        return await _acompletion(
+            f"ollama/{settings.ollama_model}",
+            messages=messages,
+            stream=stream,
+            timeout=max(timeout, 60.0),
+            api_base=settings.ollama_base_url,
+            **kwargs,
+        )
+    if rate_limited or first_error is None:
+        raise QuotaExceededError("LLM quota exceeded, retry shortly")
+    raise first_error
 
 
 def response_text(response: Any) -> str:

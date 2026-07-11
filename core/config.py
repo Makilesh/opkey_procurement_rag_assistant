@@ -21,9 +21,17 @@ class Settings(BaseSettings):
     # --- models ---
     model_main: str = "gemini/gemini-3.5-flash"  # ⚠ VERIFY against LiteLLM Gemini provider docs
     model_cheap: str = "gemini/gemini-3.1-flash-lite"  # ⚠ VERIFY against LiteLLM Gemini provider docs
-    # Conservative: observed free-tier 429s at higher rates despite documented limits.
-    rpm_main: int = 6
-    rpm_cheap: int = 10
+    # Fallback chain tried in order when a model's budget is spent or it 429s.
+    # All ids probe-verified against this project's AI Studio quota dashboard.
+    model_fallbacks: str = (
+        "gemini/gemini-3-flash-preview,gemini/gemini-2.5-flash,gemini/gemini-2.5-flash-lite"
+    )
+    # Free-tier budgets from the AI Studio rate-limit dashboard (2026-07-11):
+    # 3.5-flash = 5 RPM / 20 RPD, 3.1-flash-lite = 15 RPM / 500 RPD.
+    rpm_main: int = 5
+    rpd_main: int = 20
+    rpm_cheap: int = 15
+    rpd_cheap: int = 500
     embedding_model: str = "BAAI/bge-m3"
     reranker_model: str = "BAAI/bge-reranker-v2-m3"
     embedding_device: str = "cpu"  # cuda for local dev only; Docker submission is CPU-only

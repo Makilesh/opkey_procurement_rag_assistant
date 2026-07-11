@@ -8,7 +8,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # CPU-only torch first so sentence-transformers doesn't pull the CUDA build.
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -21,6 +21,14 @@ COPY data ./data
 # Embedding/reranker models are downloaded on first boot into the hf_cache
 # volume (documented in README) to keep this image small; they persist across
 # rebuilds and restarts.
+
+# Non-root runtime user. The volume mountpoints (/app/storage/state, /cache/hf)
+# are pre-created with this ownership so fresh named volumes inherit it on
+# first use; /app/eval stays writable for results.md.
+RUN useradd --create-home --uid 10001 appuser \
+    && mkdir -p /app/storage/state /cache/hf \
+    && chown -R appuser:appuser /app/storage /cache /app/eval
+USER appuser
 
 EXPOSE 8000
 

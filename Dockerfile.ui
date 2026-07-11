@@ -9,6 +9,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY ui ./ui
 
+# Non-root runtime user (the UI writes nothing outside its home/tmp).
+RUN useradd --create-home --uid 10001 appuser
+USER appuser
+
 EXPOSE 7860
 
 CMD ["python", "ui/app.py"]

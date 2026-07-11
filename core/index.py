@@ -15,7 +15,7 @@ import pickle
 import re
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -106,7 +106,7 @@ class IndexStore:
                     "filename": str(meta.get("source_filename", "unknown")),
                     "pages": 0,
                     "chunks": 0,
-                    "ingested_at": datetime.now(timezone.utc).isoformat() + " (recovered)",
+                    "ingested_at": datetime.now(UTC).isoformat() + " (recovered)",
                 },
             )
             entry["chunks"] += 1
@@ -203,7 +203,7 @@ class IndexStore:
                 "filename": filename,
                 "pages": pages,
                 "chunks": len(chunks),
-                "ingested_at": datetime.now(timezone.utc).isoformat(),
+                "ingested_at": datetime.now(UTC).isoformat(),
             }
             self._save_registry()
             await run_in_embed_pool(self._rebuild_bm25_sync)

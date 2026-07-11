@@ -34,7 +34,7 @@ async def _parse_credentials(request: Request) -> TokenRequest:
     try:
         return TokenRequest(username=str(form.get("username", "")), password=str(form.get("password", "")))
     except ValidationError:
-        raise HTTPException(status_code=422, detail="username and password are required")
+        raise HTTPException(status_code=422, detail="username and password are required") from None
 
 
 @router.post("/auth/token", response_model=TokenResponse)

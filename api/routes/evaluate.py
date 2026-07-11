@@ -15,7 +15,7 @@ async def evaluate(request: Request, user: str = Depends(get_current_user)) -> E
     try:
         summary = await run_evaluation(request.app.state.index, request.app.state.sessions)
     except QuotaExceededError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return EvalResponse(
         hit_rate=summary["hit_rate"],
         answer_relevance=summary["answer_relevance"],

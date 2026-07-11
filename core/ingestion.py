@@ -8,9 +8,9 @@ retrieval-friendly acronym expansion. Embedding/upserting lives in core.index.
 
 import logging
 import re
-from dataclasses import dataclass, field
+from collections.abc import Iterator
+from dataclasses import dataclass
 from statistics import median
-from typing import Iterator
 
 import fitz  # PyMuPDF
 
@@ -116,7 +116,7 @@ def parse_pdf_blocks(data: bytes) -> Iterator[Block]:
 
 def parse_txt_blocks(data: bytes) -> Iterator[Block]:
     text = data.decode("utf-8", errors="replace")
-    for i, paragraph in enumerate(re.split(r"\n\s*\n", text)):
+    for paragraph in re.split(r"\n\s*\n", text):
         paragraph = paragraph.strip()
         if paragraph:
             yield Block("", 1, paragraph)

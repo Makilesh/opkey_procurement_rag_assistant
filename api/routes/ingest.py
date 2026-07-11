@@ -35,7 +35,7 @@ async def ingest_document(
     try:
         doc_id, chunks_created, pages = await index.ingest(filename, data)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     log_stage(
         logger,
         "ingest complete",

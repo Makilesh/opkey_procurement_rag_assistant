@@ -12,8 +12,9 @@ import os
 import re
 import time
 from collections import deque
-from datetime import datetime, timedelta, timezone
-from typing import Any, AsyncIterator, Literal
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta, timezone
+from typing import Any, Literal
 
 import litellm
 
@@ -81,7 +82,7 @@ class DailyCounter:
 
             return datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y%m%d")
         except Exception:
-            return datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=-8))).strftime(
+            return datetime.now(UTC).astimezone(timezone(timedelta(hours=-8))).strftime(
                 "%Y%m%d"
             )
 

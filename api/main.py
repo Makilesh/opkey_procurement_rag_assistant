@@ -3,17 +3,16 @@
 import asyncio
 import logging
 import time
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 from fastapi import FastAPI, Request, Response
 from slowapi.errors import RateLimitExceeded
 from slowapi.extension import _rate_limit_exceeded_handler
 
-from core import metrics
-
 from api.deps import limiter
 from api.routes import auth, chat, documents, evaluate, health, ingest, sessions
+from core import metrics
 from core.bootstrap import full_ingest_data_dir, prepare_index_dir
 from core.config import settings
 from core.index import IndexStore

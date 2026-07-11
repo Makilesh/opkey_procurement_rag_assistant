@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -47,7 +47,7 @@ async def chat(
     try:
         answer, sources = await chat_once(index, store, body.session_id, body.message)
     except QuotaExceededError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return ChatResponse(
         answer=answer,
         sources=[Source(**source) for source in sources],

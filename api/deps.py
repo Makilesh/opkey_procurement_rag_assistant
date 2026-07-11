@@ -22,7 +22,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> str:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
-        )
+        ) from None
     subject = payload.get("sub")
     if not subject:
         raise HTTPException(

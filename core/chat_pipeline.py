@@ -5,11 +5,11 @@ import asyncio
 import logging
 import re
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Literal
+from typing import Any, Literal
 
 from core import metrics, prompts
-from core.config import settings
 from core.index import IndexStore
 from core.llm import QuotaExceededError, complete, response_text, stream_deltas
 from core.logging import log_stage

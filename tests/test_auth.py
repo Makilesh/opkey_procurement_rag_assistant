@@ -8,6 +8,7 @@ from api.deps import ALGORITHM, get_current_user
 from api.main import app
 from core.config import settings
 
+
 # Test-only protected probe so auth can be verified before protected routes exist.
 @app.get("/_protected", include_in_schema=False)
 async def _protected(user: str = Depends(get_current_user)) -> dict[str, str]:

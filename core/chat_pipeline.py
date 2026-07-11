@@ -5,7 +5,7 @@ import asyncio
 import logging
 import re
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Coroutine
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -164,6 +164,19 @@ async def prepare_turn(
     )
 
 
+# When a client disconnects mid-stream the request scope is already cancelled,
+# so any await inside the generator's cleanup can be cancelled too. Salvage
+# persistence therefore runs on detached tasks; the set keeps live references
+# so they aren't garbage-collected before completing.
+_salvage_tasks: set[asyncio.Task[None]] = set()
+
+
+def _persist_detached(coro: Coroutine[Any, Any, None]) -> None:
+    task = asyncio.get_running_loop().create_task(coro)
+    _salvage_tasks.add(task)
+    task.add_done_callback(_salvage_tasks.discard)
+
+
 async def persist_turn(
     store: SessionStore,
     session_id: str,
@@ -232,6 +245,22 @@ async def chat_stream(
             collected.append(delta)
             yield {"delta": delta}
     except QuotaExceededError:
+        raise
+    except (GeneratorExit, asyncio.CancelledError):
+        # Client disconnected mid-answer. Without this, the whole turn (the
+        # user's message included) would vanish from history and the next
+        # follow-up would condense against a hole in the conversation.
+        logger.warning("client disconnected mid-stream, salvaging partial turn")
+        _persist_detached(
+            persist_turn(
+                store,
+                session_id,
+                message,
+                "".join(collected),
+                prepared.sources if collected else [],
+                prepared.condensed_query,
+            )
+        )
         raise
     except Exception:
         # Gemini intermittently drops streaming connections mid-body. Salvage:

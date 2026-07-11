@@ -26,7 +26,21 @@ async def ingest_document(
     filename = file.filename or "upload"
     if not filename.lower().endswith(ALLOWED_SUFFIXES):
         raise HTTPException(status_code=422, detail="Only PDF and TXT files are supported")
-    data = await file.read()
+    # Read in 1 MB slices so the size cap rejects an oversized upload without
+    # ever buffering it whole. The cap is an abuse guard (multi-GB uploads),
+    # NOT a document-size policy — the default 200 MB fits PDFs of tens of
+    # thousands of pages (the 670-page Oracle guide is ~3 MB).
+    max_bytes = settings.max_upload_mb * 1024 * 1024
+    buffer = bytearray()
+    while chunk := await file.read(1 << 20):
+        buffer += chunk
+        if len(buffer) > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File exceeds the {settings.max_upload_mb} MB upload limit "
+                "(configurable via MAX_UPLOAD_MB)",
+            )
+    data = bytes(buffer)
     if not data:
         raise HTTPException(status_code=422, detail="Uploaded file is empty")
 

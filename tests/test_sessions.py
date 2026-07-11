@@ -48,6 +48,19 @@ class FakeRedis:
             removed += int(self.hashes.pop(key, None) is not None)
         return removed
 
+    async def llen(self, key: str) -> int:
+        return len(self.lists.get(key, []))
+
+    async def hgetall(self, key: str) -> dict[str, str]:
+        return dict(self.hashes.get(key, {}))
+
+    async def scan_iter(self, match: str = "*", count: int = 100) -> Any:
+        import fnmatch
+
+        for key in list(self.lists) + [k for k in self.hashes if k not in self.lists]:
+            if fnmatch.fnmatch(key, match):
+                yield key
+
 
 def make_store() -> SessionStore:
     return SessionStore(FakeRedis())  # type: ignore[arg-type]

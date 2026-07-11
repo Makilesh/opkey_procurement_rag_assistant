@@ -10,6 +10,27 @@ services:
       timeout: 3s
       retries: 10
 
+  # Seeds the chroma volume from the committed prebuilt index on first boot
+  # (cold-start optimization only — the /ingest pipeline remains authoritative).
+  index-init:
+    image: alpine:3.20
+    volumes:
+      - chroma_data:/data
+      - ./prebuilt_index:/prebuilt:ro
+    command: >
+      sh -c "if [ -z \"$(ls -A /data 2>/dev/null)\" ] && [ -d /prebuilt/chroma ];
+             then echo 'seeding chroma volume from prebuilt index';
+                  cp -r /prebuilt/chroma/. /data/;
+             else echo 'chroma volume already initialized'; fi"
+
+  chroma:
+    image: chromadb/chroma:1.5.9  # pinned to the client version in requirements.txt
+    volumes:
+      - chroma_data:/data
+    depends_on:
+      index-init:
+        condition: service_completed_successfully
+
   api:
     build:
       context: .
@@ -17,20 +38,23 @@ services:
     env_file: .env
     environment:
       REDIS_URL: redis://redis:6379/0
+      CHROMA_HOST: chroma
+      CHROMA_PORT: 8000
       EMBEDDING_DEVICE: cpu
-      CHROMA_DIR: /app/storage/chroma
-      BM25_PATH: /app/storage/chroma/bm25.pkl
+      CHROMA_DIR: /app/storage/state
+      BM25_PATH: /app/storage/state/bm25.pkl
       PREBUILT_INDEX_DIR: /app/prebuilt_index
       OLLAMA_FALLBACK_ENABLED: "false"
     ports:
       - "${API_PORT:-8000}:8000"
     volumes:
-      - chroma_data:/app/storage/chroma
+      - api_state:/app/storage/state
       - hf_cache:/cache/hf
-      - ./prebuilt_index:/app/prebuilt_index:ro
     depends_on:
       redis:
         condition: service_healthy
+      chroma:
+        condition: service_started
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=5).status==200 else 1)"]
       interval: 10s
@@ -53,4 +77,5 @@ services:
 volumes:
   redis_data:
   chroma_data:
+  api_state:
   hf_cache:

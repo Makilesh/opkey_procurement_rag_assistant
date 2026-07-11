@@ -224,27 +224,33 @@ curl http://localhost:8000/evaluate -H "Authorization: Bearer $TOKEN"
 
 ### Results
 
-Run of 2026-07-11 (`MODEL_MAIN=gemini/gemini-3.1-flash-lite`, judge = flash-lite,
-29 LLM calls, 108s total):
+Run of 2026-07-11 — answers on the default `gemini-3.5-flash` chain, judged by the
+held-out `gemini-2.5-flash` with the strict rubric (29 LLM calls, 271s):
 
-- **Hit Rate:** 82% (9/11 scored questions; the refusal question is excluded by design)
-- **Answer Relevance (1–5):** 5.0
-- **Faithfulness (1–5):** 5.0
+- **Hit Rate:** 91% (10/11 scored questions; the refusal question is excluded by design)
+- **Answer Relevance (1–5, strict judge):** 4.5
+- **Faithfulness (1–5, strict judge):** 4.92
+- **Keyword Coverage (objective, no LLM):** 100%
 
-| # | Question | Multi-turn | Hit | Relevance | Faithfulness | Notes |
-|---|----------|------------|-----|-----------|--------------|-------|
-| richmond-thresholds | What are the competitive bidding thresholds at the University of Richmond? |  | ✅ | 5 | 5 |  |
-| richmond-capital-equipment | What qualifies as capital equipment and what is its minimum purchase price? |  | ✅ | 5 | 5 |  |
-| richmond-card-invoice | Can a University of Richmond purchase card be used to pay an invoice? |  | ✅ | 5 | 5 |  |
-| richmond-tech-purchases | Which department manages technology purchases such as hardware and software? |  | ✅ | 5 | 5 |  |
-| oracle-order-vs-requisition | What is the difference between an order and a requisition in Oracle Procurement? |  | ✅ | 5 | 5 |  |
-| oracle-po-types | What purchase order types does Oracle Purchasing provide? |  | ✅ | 5 | 5 |  |
-| oracle-requisition-lifecycle | What does the requisition life cycle refer to in Oracle Procurement? |  | ✅ | 5 | 5 |  |
-| oracle-reassign-requisition | Can I reassign a requisition created by someone else in Oracle Procurement? |  | ✅ | 5 | 5 |  |
-| multiturn-oracle-requisition | What statuses can it have during approval? | yes | ❌ | 5 | 5 | see failure #1 |
-| multiturn-richmond-thresholds | What is required for purchases above the highest threshold? | yes | ✅ | 5 | 5 |  |
-| cross-doc-approval-limit | What is the approval limit for purchases? |  | ❌ | 5 | 5 | see failure #2 |
-| out-of-scope-refusal | What is the capital of France? |  | — | 5 | 5 | refused correctly |
+| # | Question | Multi-turn | Hit | Relevance | Faithfulness | Keywords | Notes |
+|---|----------|------------|-----|-----------|--------------|----------|-------|
+| richmond-thresholds | What are the competitive bidding thresholds at the University of Richmond? |  | ✅ | 5 | 5 | 100% |  |
+| richmond-capital-equipment | What qualifies as capital equipment and what is its minimum purchase price? |  | ✅ | 5 | 5 | 100% |  |
+| richmond-card-invoice | Can a University of Richmond purchase card be used to pay an invoice? |  | ✅ | 5 | 5 | 100% |  |
+| richmond-tech-purchases | Which department manages technology purchases such as hardware and software? |  | ✅ | 5 | 5 | 100% |  |
+| oracle-order-vs-requisition | What is the difference between an order and a requisition in Oracle Procurement? |  | ✅ | 5 | 5 | 100% |  |
+| oracle-po-types | What purchase order types does Oracle Purchasing provide? |  | ✅ | 5 | 5 | 100% |  |
+| oracle-requisition-lifecycle | What does the requisition life cycle refer to in Oracle Procurement? |  | ✅ | 5 | 5 | 100% |  |
+| oracle-reassign-requisition | Can I reassign a requisition created by someone else in Oracle Procurement? |  | ✅ | 5 | 5 | 100% |  |
+| multiturn-oracle-requisition | What statuses can it have during approval? | yes | ✅ | **3** | 5 | 100% | partial answer — see failure #1 |
+| multiturn-richmond-thresholds | What is required for purchases above the highest threshold? | yes | ✅ | 4 | 5 | 100% |  |
+| cross-doc-approval-limit | What is the approval limit for purchases? |  | ❌ | 5 | **4** | — | unsupported claim flagged — see failure #2 |
+| out-of-scope-refusal | What is the capital of France? |  | — | 2 | 5 | — | refused correctly (low relevance is the *correct* outcome for a refusal) |
+
+The score variance (3s, 4s, a 2) is the strict held-out judge working as intended — an
+earlier run with a lenient same-model judge returned a uniform 5.0 across the board,
+which is why the rubric was calibrated ("5 is rare", claim-by-claim grounding check)
+and the judge moved to a model that never generates the answers.
 
 ### Failure analysis
 
@@ -257,23 +263,27 @@ which the user never said. In a 670-page manual dense with approval-workflow con
 one word steered hybrid retrieval toward the generic *Transaction Console* /
 *purchasing-document approval* sections (rerank top score 0.923 — confidently wrong) instead
 of the requisition-status tables around pages 202–206. The answer was fluent, grounded, and
-plausible (it described Transaction Console + purchasing document statuses) — which is what
-makes this failure mode dangerous: faithfulness scored 5 because the answer matched the
-*retrieved* chunks, but they were the wrong chunks. **Hypothesis:** condensation should
-paraphrase minimally; every token it invents becomes a high-weight retrieval term.
-**Fix I'd ship:** constrain the condensation prompt to reuse only words from the
-conversation plus the resolved entity (or apply a section-path filter derived from the
-previous turn's sources, biasing retrieval to stay in the same chapter for follow-ups).
+plausible — which is what makes this failure mode dangerous: faithfulness scored 5 because
+the answer matched the *retrieved* chunks, but they were the wrong chunks. The failure is
+**run-dependent**: in the strict-judge rerun the condensed query landed in the right pages
+(hit ✅), yet the judge still scored relevance only **3/5** — the answer still mixed generic
+document-approval statuses into what should have been a requisition-specific list, i.e. the
+drift persists in softer form even when page-level retrieval succeeds.
+**Hypothesis:** condensation should paraphrase minimally; every token it invents becomes a
+high-weight retrieval term. **Fix I'd ship:** constrain the condensation prompt to reuse
+only words from the conversation plus the resolved entity (or apply a section-path filter
+derived from the previous turn's sources, biasing follow-ups to stay in the same chapter).
 
 **2. Retrieval failure — cross-document ambiguity (cross-doc-approval-limit).**
 *"What is the approval limit for purchases?"* has no single answer: Richmond defines
 dollar thresholds ($10k/$125k) while the Oracle guide discusses approval routing and
 signature authority. Retrieval confidence collapsed (top rerank score 0.452 vs ~0.99 on
 well-posed questions; only 3 of 10 candidates cleared the 0.25 gate) and the kept chunks
-missed the expected Richmond threshold pages. The system behaved reasonably — it answered
-from what it found and stayed faithful — but the retriever mixed both documents rather
-than surfacing the policy table. **Hypothesis:** ambiguous, entity-free queries dilute both
-dense and sparse signals across documents. **Fix I'd ship:** a document-scope clarifier —
+missed the expected Richmond threshold pages. The retriever mixed both documents rather
+than surfacing the policy table, and the strict judge additionally flagged an unsupported
+cross-document attribution in the answer (faithfulness 4/5) — mixing sources invites the
+model to blur which document says what. **Hypothesis:** ambiguous, entity-free queries
+dilute both dense and sparse signals across documents. **Fix I'd ship:** a document-scope clarifier —
 when top-1 rerank confidence is low and results span both documents, ask the user which
 context they mean (Oracle software workflow vs. university policy), or answer both
 explicitly per document.

@@ -32,7 +32,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if settings.eager_load_models:
         # Load the embedder once at startup (first boot downloads into hf_cache).
         await run_in_embed_pool(get_embedder)
-        if bootstrap_path == "full-ingest":
+        # Last-resort path: nothing seeded the index (no volume, no prebuilt).
+        if bootstrap_path == "full-ingest" or (
+            bootstrap_path == "server" and app.state.index.chunk_count() == 0
+        ):
             ingest_task = asyncio.create_task(full_ingest_data_dir(app.state.index))
     logger.info("startup complete (bootstrap=%s)", bootstrap_path)
     yield

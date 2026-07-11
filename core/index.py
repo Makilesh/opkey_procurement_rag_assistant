@@ -1,8 +1,11 @@
 """Persistent knowledge-base index: Chroma (dense) + BM25 (sparse) + doc registry.
 
-Chroma runs embedded with its data dir on the chroma_data volume. The BM25
-index is rebuilt on every ingest/delete and pickled into the same volume so it
-survives restarts. The docs registry (docs.json) lives there too.
+Chroma is the single source of truth. It runs either as a dedicated service
+(CHROMA_HOST set — the docker-compose/production shape) or embedded in-process
+(local dev, unit tests). Everything the api keeps locally is a derived cache
+that can be rebuilt from Chroma alone: the BM25 index (re-pickled on every
+ingest/delete) and the docs registry (docs.json; recovered by scanning chunk
+metadata if the cache is missing) — so api instances are effectively stateless.
 """
 
 import asyncio
@@ -32,22 +35,50 @@ def _bm25_tokenize(text: str) -> list[str]:
     return _WORD_RE.findall(text.lower())
 
 
+def _make_client() -> Any:
+    """Server mode when CHROMA_HOST is set (with connection retries so the api
+    tolerates the chroma service still booting), embedded mode otherwise."""
+    if settings.chroma_host:
+        last_exc: Exception | None = None
+        for attempt in range(20):
+            try:
+                client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
+                client.heartbeat()
+                logger.info(
+                    "connected to chroma service at %s:%d",
+                    settings.chroma_host,
+                    settings.chroma_port,
+                )
+                return client
+            except Exception as exc:
+                last_exc = exc
+                logger.info("waiting for chroma service (attempt %d/20)...", attempt + 1)
+                time.sleep(3)
+        raise RuntimeError(f"chroma service unreachable: {last_exc}")
+    chroma_dir = Path(settings.chroma_dir)
+    chroma_dir.mkdir(parents=True, exist_ok=True)
+    return chromadb.PersistentClient(path=str(chroma_dir))
+
+
 class IndexStore:
     def __init__(self) -> None:
-        chroma_dir = Path(settings.chroma_dir)
-        chroma_dir.mkdir(parents=True, exist_ok=True)
-        self._client = chromadb.PersistentClient(path=str(chroma_dir))
+        state_dir = Path(settings.chroma_dir)
+        state_dir.mkdir(parents=True, exist_ok=True)
+        self._client = _make_client()
         self._collection = self._client.get_or_create_collection(
             "knowledge_base", metadata={"hnsw:space": "cosine"}
         )
-        self._registry_path = chroma_dir / "docs.json"
+        self._registry_path = state_dir / "docs.json"
         self._registry: dict[str, dict[str, Any]] = self._load_registry()
+        if not self._registry and self._collection.count() > 0:
+            self._recover_registry()
         self._bm25: BM25Okapi | None = None
         self._bm25_ids: list[str] = []
         self._lock = asyncio.Lock()
         self._load_bm25()
         logger.info(
-            "index ready: %d docs, %d chunks, bm25=%s",
+            "index ready (%s): %d docs, %d chunks, bm25=%s",
+            "server" if settings.chroma_host else "embedded",
             self.doc_count(),
             self.chunk_count(),
             self._bm25 is not None,
@@ -59,6 +90,30 @@ class IndexStore:
         if self._registry_path.exists():
             return json.loads(self._registry_path.read_text(encoding="utf-8"))
         return {}
+
+    def _recover_registry(self) -> None:
+        """Rebuild the docs registry by scanning chunk metadata in Chroma —
+        the registry is only a cache; Chroma stays the source of truth."""
+        data = self._collection.get(include=["metadatas"])
+        docs: dict[str, dict[str, Any]] = {}
+        for meta in data["metadatas"] or []:
+            doc_id = str(meta.get("doc_id", ""))
+            if not doc_id:
+                continue
+            entry = docs.setdefault(
+                doc_id,
+                {
+                    "filename": str(meta.get("source_filename", "unknown")),
+                    "pages": 0,
+                    "chunks": 0,
+                    "ingested_at": datetime.now(timezone.utc).isoformat() + " (recovered)",
+                },
+            )
+            entry["chunks"] += 1
+            entry["pages"] = max(entry["pages"], int(meta.get("page_end", 0)))
+        self._registry = docs
+        self._save_registry()
+        logger.info("registry recovered from chroma metadata: %d docs", len(docs))
 
     def _save_registry(self) -> None:
         self._registry_path.write_text(

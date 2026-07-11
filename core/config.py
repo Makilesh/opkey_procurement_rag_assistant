@@ -66,7 +66,16 @@ class Settings(BaseSettings):
     chunk_overlap_ratio: float = 0.15
     heading_font_ratio: float = 1.2
 
+    # --- vector store ---
+    # When CHROMA_HOST is set the api talks to a dedicated Chroma service
+    # (client/server mode — production shape, used in docker-compose).
+    # When empty, Chroma runs embedded in-process (local dev and unit tests).
+    chroma_host: str = ""
+    chroma_port: int = 8000
+
     # --- storage paths ---
+    # In embedded mode this dir holds the Chroma data itself; in server mode it
+    # holds only the api's derived state (docs.json registry cache + BM25 pickle).
     chroma_dir: str = "storage/chroma"
     bm25_path: str = "storage/chroma/bm25.pkl"
     data_dir: str = "data"

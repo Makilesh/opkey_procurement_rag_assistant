@@ -30,7 +30,15 @@ def _volume_initialized(chroma_dir: Path) -> bool:
 
 def prepare_index_dir() -> str:
     """Ensure the chroma dir is populated before IndexStore opens it.
-    Returns which bootstrap path was taken."""
+    Returns which bootstrap path was taken.
+
+    In server mode (CHROMA_HOST set) the api cannot touch the chroma service's
+    files — the index-init compose service seeds the chroma volume from
+    prebuilt_index/ before chroma starts, so there is nothing to do here."""
+    if settings.chroma_host:
+        logger.info("bootstrap: chroma server mode — volume seeding handled by index-init")
+        return "server"
+
     chroma_dir = Path(settings.chroma_dir)
     chroma_dir.mkdir(parents=True, exist_ok=True)
 

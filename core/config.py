@@ -87,6 +87,11 @@ class Settings(BaseSettings):
     # --- rate limits (per authenticated user) ---
     rate_limit_chat: str = "30/minute"
     rate_limit_ingest: str = "5/minute"
+    rate_limit_evaluate: str = "2/hour"
+
+    # Abuse guard, not a document-size policy: 200 MB comfortably covers PDFs
+    # in the tens of thousands of pages (the 670-page Oracle guide is ~3 MB).
+    max_upload_mb: int = 200
 
     log_level: str = "INFO"
 

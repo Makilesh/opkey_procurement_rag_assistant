@@ -174,13 +174,17 @@ with `Retry-After` · `503` LLM quota exhausted (clean JSON detail, never a stac
   a clean 503 on quota exhaustion. Expected cost: **$0 on the free tier**, and well under
   the $3 guideline on paid keys (a full eval run is ~40 small calls).
 
-  > **Observed free-tier reality:** during development the project's actual quota for
-  > `gemini-3.5-flash` was `GenerateRequestsPerDayPerProjectPerModel-FreeTier = 20`
-  > (20 requests/day — far below the documented 1,500 RPD). The architecture absorbs
-  > this: models are env-swappable (`MODEL_MAIN`), 429s back off 20s before one retry,
-  > a mid-stream disconnect salvages the partial answer, and the eval suite marks
-  > quota-hit questions "unscored" instead of crashing. The evaluation below was run
-  > with `MODEL_MAIN=gemini/gemini-3.1-flash-lite`, whose free quota is workable.
+  > **Observed free-tier reality:** the project's actual quota for `gemini-3.5-flash`
+  > is **5 RPM / 20 requests per day** (verified in the AI Studio rate-limit dashboard —
+  > far below the commonly cited 1,500 RPD). The architecture absorbs this with an
+  > **automatic model-fallback chain**: every model has a client-side RPM *and* RPD
+  > budget matched to the dashboard, and when the primary's budget is spent (or it
+  > returns 429) the wrapper falls through `MODEL_FALLBACKS` in order
+  > (`gemini-3-flash-preview` → `gemini-2.5-flash` → `gemini-2.5-flash-lite`, all ids
+  > probe-verified) before returning a clean 503. Mid-stream disconnects salvage the
+  > partial answer, and the eval suite marks quota-hit questions "unscored" instead of
+  > crashing. The evaluation below was run with `MODEL_MAIN=gemini/gemini-3.1-flash-lite`
+  > (500 RPD) to keep the scarce 3.5-flash budget for interactive use.
 - **CPU-only Docker.** The api image installs the CPU torch wheel explicitly; no GPU is
   assumed anywhere in the compose path (GPU is a local-dev-only option via
   `EMBEDDING_DEVICE=cuda`). Models are cached in the `hf_cache` volume across rebuilds.

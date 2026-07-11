@@ -102,8 +102,9 @@ TOKEN=$(curl -s -X POST http://localhost:8000/auth/token \
 | POST | `/auth/token` | no | Exchange username/password for a JWT (60 min TTL) |
 | POST | `/ingest` | 🔒 | Upload + index a PDF/TXT (no restart needed) |
 | POST | `/chat` | 🔒 | Session-aware chat; SSE stream or JSON |
-| GET | `/sessions/{id}/history` | 🔒 | Full turn-by-turn history |
-| DELETE | `/sessions/{id}` | 🔒 | Delete a session |
+| GET | `/sessions` | 🔒 admin | List every stored conversation (all users); non-admins get 403 |
+| GET | `/sessions/{id}/history` | 🔒 | Full turn-by-turn history (own sessions; admins: any, by `key`) |
+| DELETE | `/sessions/{id}` | 🔒 | Delete a session (same scoping) |
 | GET | `/documents` | 🔒 | List ingested documents |
 | DELETE | `/documents/{id}` | 🔒 | Remove a document from the index |
 | GET | `/evaluate` | 🔒 | Run the evaluation suite (takes minutes on free tier) |
@@ -127,6 +128,9 @@ curl -N -X POST http://localhost:8000/chat \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"session_id":"abc123","message":"What about its thresholds?","stream":true}'
 
+# List ALL sessions (admin-only — usernames in ADMIN_USERNAMES; others get 403)
+curl http://localhost:8000/sessions -H "Authorization: Bearer $TOKEN"
+
 # Session history
 curl http://localhost:8000/sessions/abc123/history -H "Authorization: Bearer $TOKEN"
 
@@ -143,9 +147,11 @@ curl -X DELETE http://localhost:8000/documents/<doc_id> -H "Authorization: Beare
 curl http://localhost:8000/evaluate -H "Authorization: Bearer $TOKEN"
 ```
 
-Error contract: `401` missing/invalid/expired token · `404` unknown session or document ·
-`422` malformed body (Pydantic) · `429` rate limited (30/min chat, 5/min ingest per user)
-with `Retry-After` · `503` LLM quota exhausted (clean JSON detail, never a stack trace).
+Error contract: `401` missing/invalid/expired token · `403` authenticated but not an admin
+(`GET /sessions`) · `404` unknown session or document · `409` evaluation already running ·
+`413` upload over `MAX_UPLOAD_MB` · `422` malformed body (Pydantic) · `429` rate limited
+(30/min chat, 5/min ingest per user) with `Retry-After` · `503` LLM quota exhausted
+(clean JSON detail, never a stack trace).
 
 ## Design decisions
 

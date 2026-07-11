@@ -22,10 +22,26 @@ from core.sessions import SessionStore
 
 logger = logging.getLogger("api")
 
+# Known non-secrets that must never reach production: the config default and
+# the .env.example placeholder.
+_PLACEHOLDER_SECRETS = {"change-me-in-env", "replace-with-a-long-random-string"}
+
+
+def _require_secure_jwt_secret() -> None:
+    """Fail fast at startup instead of silently signing tokens with a guessable
+    secret. 16+ chars also rejects trivially brute-forceable HS256 keys."""
+    if settings.jwt_secret in _PLACEHOLDER_SECRETS or len(settings.jwt_secret) < 16:
+        raise RuntimeError(
+            "JWT_SECRET is missing, a placeholder, or shorter than 16 characters. "
+            "Set a long random value in .env, e.g.: "
+            'python -c "import secrets; print(secrets.token_hex(32))"'
+        )
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     setup_logging()
+    _require_secure_jwt_secret()
     logger.info("starting api service")
     app.state.sessions = SessionStore.from_settings()
     bootstrap_path = prepare_index_dir()

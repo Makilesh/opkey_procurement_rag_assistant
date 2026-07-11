@@ -2,6 +2,7 @@
 so the Swagger Authorize button works against the same endpoint."""
 
 import json
+import secrets
 import time
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -40,7 +41,11 @@ async def _parse_credentials(request: Request) -> TokenRequest:
 @router.post("/auth/token", response_model=TokenResponse)
 async def issue_token(request: Request) -> TokenResponse:
     creds = await _parse_credentials(request)
-    if creds.username != settings.demo_username or creds.password != settings.demo_password:
+    # Constant-time compares, combined with & (not `and`) so evaluation time
+    # doesn't reveal whether the username or the password was wrong.
+    username_ok = secrets.compare_digest(creds.username.encode(), settings.demo_username.encode())
+    password_ok = secrets.compare_digest(creds.password.encode(), settings.demo_password.encode())
+    if not (username_ok & password_ok):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",

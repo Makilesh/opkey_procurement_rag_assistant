@@ -10,6 +10,7 @@ from api.schemas import ChatRequest, ChatResponse, Source
 from core.chat_pipeline import chat_once, chat_stream
 from core.config import settings
 from core.llm import QuotaExceededError
+from core.sessions import scoped_session_id
 
 logger = logging.getLogger("chat.route")
 
@@ -25,11 +26,16 @@ async def chat(
 ):
     index = request.app.state.index
     store = request.app.state.sessions
+    # Sessions are stored under the JWT subject's namespace; the client keeps
+    # using (and seeing) the raw session id it chose.
+    scoped_id = scoped_session_id(user, body.session_id)
 
     if body.stream:
         async def event_stream() -> AsyncIterator[str]:
             try:
-                async for event in chat_stream(index, store, body.session_id, body.message):
+                async for event in chat_stream(index, store, scoped_id, body.message):
+                    if "session_id" in event:
+                        event["session_id"] = body.session_id
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
             except QuotaExceededError as exc:
                 yield f"data: {json.dumps({'error': str(exc), 'status': 503})}\n\n"
@@ -45,7 +51,7 @@ async def chat(
         )
 
     try:
-        answer, sources = await chat_once(index, store, body.session_id, body.message)
+        answer, sources = await chat_once(index, store, scoped_id, body.message)
     except QuotaExceededError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return ChatResponse(

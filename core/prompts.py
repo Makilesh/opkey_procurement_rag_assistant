@@ -114,3 +114,16 @@ REFUSAL_RESPONSE = (
     "Fusion Procurement guide and the University of Richmond procurement policy — try "
     "rephrasing, or ask about requisitions, purchase orders, approvals, or purchasing thresholds."
 )
+
+# Asked when a query is genuinely split across both documents with no confident
+# match — better to confirm than to assume which one the user means.
+CLARIFY_RESPONSE = (
+    "Your question could apply to either of the two documents I have, and they answer "
+    "it differently:\n\n"
+    "- **Oracle Fusion Procurement guide** — how to *do* things in the software "
+    "(requisitions, purchase orders, approval routing, agreements).\n"
+    "- **University of Richmond procurement policy** — the organizational *rules* "
+    "(dollar thresholds, competitive-bid limits, signature authority).\n\n"
+    "Which one did you mean? You can also pick a document from the \"📚 Search in\" "
+    "menu and ask again."
+)

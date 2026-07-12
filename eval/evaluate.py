@@ -84,7 +84,7 @@ async def _answer_final_turn(
     prepared = await prepare_turn(index, store, session_id, message)
     if history:
         calls += 1  # condensation
-    if prepared.kind in ("canned", "refusal"):
+    if prepared.kind in ("canned", "refusal", "clarify"):
         answer = prepared.answer or ""
         await persist_turn(store, session_id, message, answer, [], prepared.condensed_query)
         return answer, [], "", calls
@@ -142,8 +142,10 @@ async def run_evaluation(index: IndexStore, store: SessionStore) -> dict[str, An
 
         expected_file = entry.get("expected_source_filename")
         expect_refusal = entry.get("expect_refusal", False)
+        expect_clarify = entry.get("expect_clarify", False)
+        clarified = answer == prompts.CLARIFY_RESPONSE
         hit: bool | None = None
-        if expected_file:
+        if expected_file and not expect_clarify:
             hit = _page_hit(sources, expected_file, entry.get("expected_pages", []))
 
         scores = await _judge(final_question, context_text, answer)
@@ -152,6 +154,8 @@ async def run_evaluation(index: IndexStore, store: SessionStore) -> dict[str, An
         if expect_refusal:
             refused = not sources
             notes = "refused correctly" if refused else "FAILED to refuse (hallucination risk)"
+        if expect_clarify:
+            notes = "asked for clarification" if clarified else "FAILED to clarify (assumed instead)"
         keywords = entry.get("expected_answer_keywords", [])
         coverage = _keyword_coverage(answer, keywords)
         if coverage is not None and coverage < 1.0:

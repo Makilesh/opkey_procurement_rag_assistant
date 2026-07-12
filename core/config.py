@@ -61,6 +61,12 @@ class Settings(BaseSettings):
     history_window_turns: int = 6
     history_token_budget: int = 2000
     min_rerank_score: float = 0.25
+    # Ask a clarifying question (instead of answering) when retrieval finds only
+    # moderately-relevant matches split across BOTH documents — the signal that
+    # the query is underspecified about which document it means. A confident
+    # match (top score >= this) is treated as clear and answered directly.
+    clarify_enabled: bool = True
+    clarify_max_score: float = 0.6
     dense_top_k: int = 12
     sparse_top_k: int = 12
     rerank_candidates: int = 10

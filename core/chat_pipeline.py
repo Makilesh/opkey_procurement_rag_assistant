@@ -14,7 +14,8 @@ from core.index import IndexStore
 from core.llm import QuotaExceededError, complete, response_text, stream_deltas
 from core.logging import log_stage
 from core.models import embed_texts
-from core.retrieval import RetrievedChunk, retrieve
+from core.config import settings
+from core.retrieval import RetrievedChunk, is_ambiguous_across_documents, retrieve
 from core.semcache import SemanticCache
 from core.sessions import SessionStore, Turn
 
@@ -138,8 +139,8 @@ async def condense_query(history: list[Turn], message: str) -> str:
 
 @dataclass
 class PreparedTurn:
-    kind: Literal["canned", "refusal", "rag", "cached"]
-    answer: str | None = None  # set for canned/refusal/cached
+    kind: Literal["canned", "refusal", "rag", "cached", "clarify"]
+    answer: str | None = None  # set for canned/refusal/cached/clarify
     messages: list[dict[str, str]] = field(default_factory=list)  # set for rag
     sources: list[dict[str, Any]] = field(default_factory=list)
     condensed_query: str | None = None
@@ -189,6 +190,13 @@ async def prepare_turn(
     )
     if not chunks:
         return PreparedTurn(kind="refusal", answer=prompts.REFUSAL_RESPONSE, condensed_query=condensed)
+    # Ambiguous across both documents with no confident match → ask which one
+    # rather than assuming. Skipped when the user already scoped via doc_filter.
+    if settings.clarify_enabled and doc_filter is None and is_ambiguous_across_documents(chunks):
+        log_stage(logger, "clarify requested", session_id=session_id, condensed=condensed)
+        return PreparedTurn(
+            kind="clarify", answer=prompts.CLARIFY_RESPONSE, condensed_query=condensed
+        )
     return PreparedTurn(
         kind="rag",
         messages=_answer_messages(chunks, history, message),
@@ -252,7 +260,7 @@ async def chat_once(
     """Non-streaming chat: returns (answer, sources) and persists the turn."""
     started = time.perf_counter()
     prepared = await prepare_turn(index, store, session_id, message, doc_filter, cache)
-    if prepared.kind in ("canned", "refusal", "cached"):
+    if prepared.kind in ("canned", "refusal", "cached", "clarify"):
         answer = prepared.answer or ""
         await persist_turn(
             store, session_id, message, answer, prepared.sources, prepared.condensed_query
@@ -288,7 +296,7 @@ async def chat_stream(
     started = time.perf_counter()
     prepared = await prepare_turn(index, store, session_id, message, doc_filter, cache)
 
-    if prepared.kind in ("canned", "refusal", "cached"):
+    if prepared.kind in ("canned", "refusal", "cached", "clarify"):
         answer = prepared.answer or ""
         yield {"delta": answer}
         yield {"sources": prepared.sources, "session_id": session_id}

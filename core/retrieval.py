@@ -53,6 +53,23 @@ def select_with_document_diversity(
     return kept, False
 
 
+def is_ambiguous_across_documents(chunks: list["RetrievedChunk"]) -> bool:
+    """True when retrieval found only moderately-relevant matches split across
+    BOTH documents — the signal that the query is underspecified about which
+    document it means (e.g. "what is the approval limit?" fits both the Oracle
+    software workflow and the Richmond policy thresholds).
+
+    A confident single-document match (top score >= CLARIFY_MAX_SCORE) is never
+    ambiguous, even if both documents appear — so well-posed questions, which
+    rerank near 1.0, always answer directly instead of asking."""
+    if len(chunks) < 2:
+        return False
+    files = {c.metadata.get("source_filename") for c in chunks}
+    if len(files) < 2:
+        return False
+    return max(c.score for c in chunks) < settings.clarify_max_score
+
+
 def rrf_fuse(rankings: list[list[str]], k: int) -> list[str]:
     """Reciprocal-rank fusion over id rankings; deduplicates across lists."""
     scores: dict[str, float] = {}

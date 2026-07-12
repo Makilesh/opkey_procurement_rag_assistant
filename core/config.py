@@ -61,12 +61,14 @@ class Settings(BaseSettings):
     history_window_turns: int = 6
     history_token_budget: int = 2000
     min_rerank_score: float = 0.25
-    # Ask a clarifying question (instead of answering) when retrieval finds only
-    # moderately-relevant matches split across BOTH documents — the signal that
-    # the query is underspecified about which document it means. A confident
-    # match (top score >= this) is treated as clear and answered directly.
+    # Ask a clarifying question instead of answering when the BEST match is only
+    # weakly relevant — the top rerank score sits above the refusal gate but
+    # below this, meaning retrieval found something yet isn't confident it
+    # understood the question. Rather than answer from a shaky match (assuming),
+    # the bot asks the user to be more specific. Confident queries rerank ~0.9+
+    # and are answered directly, so this fires only on genuinely vague ones.
     clarify_enabled: bool = True
-    clarify_max_score: float = 0.6
+    clarify_max_score: float = 0.45
     dense_top_k: int = 12
     sparse_top_k: int = 12
     rerank_candidates: int = 10

@@ -100,7 +100,8 @@
     "id": "cross-doc-approval-limit",
     "turns": ["What is the approval limit for purchases?"],
     "expected_answer_keywords": [],
-    "expect_clarify": true
+    "expected_source_filename": "richmond_procurement_policy.pdf",
+    "expected_pages": [4, 7]
   },
   {
     "id": "out-of-scope-refusal",

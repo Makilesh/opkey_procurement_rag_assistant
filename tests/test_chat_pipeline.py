@@ -200,22 +200,22 @@ def _chunk(filename: str, score: float) -> RetrievedChunk:
     )
 
 
-def test_ambiguous_signal() -> None:
-    from core.retrieval import is_ambiguous_across_documents
+def test_low_confidence_signal() -> None:
+    from core.retrieval import is_low_confidence
 
-    # split across both docs, both weak → ambiguous
-    assert is_ambiguous_across_documents([_chunk("a.pdf", 0.45), _chunk("b.pdf", 0.40)])
-    # a confident match, even split across docs → NOT ambiguous (answer it)
-    assert not is_ambiguous_across_documents([_chunk("a.pdf", 0.92), _chunk("b.pdf", 0.40)])
-    # weak but all from ONE doc → NOT ambiguous (not a which-document question)
-    assert not is_ambiguous_across_documents([_chunk("a.pdf", 0.45), _chunk("a.pdf", 0.40)])
+    # top match weak (below CLARIFY_MAX_SCORE 0.45) → low confidence, clarify
+    assert is_low_confidence([_chunk("a.pdf", 0.32), _chunk("b.pdf", 0.28)])
+    # a confident top match → answer it (even if a weak chunk trails)
+    assert not is_low_confidence([_chunk("a.pdf", 0.92), _chunk("b.pdf", 0.28)])
+    # nothing retrieved → not "low confidence", that's the refusal path
+    assert not is_low_confidence([])
 
 
-async def test_clarify_when_ambiguous(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_clarify_when_low_confidence(monkeypatch: pytest.MonkeyPatch) -> None:
     store = make_store()
 
     async def fake_retrieve(index: Any, query: str, **kwargs: Any) -> list[RetrievedChunk]:
-        return [_chunk("oracle.pdf", 0.45), _chunk("richmond.pdf", 0.40)]
+        return [_chunk("oracle.pdf", 0.32)]  # weak best match
 
     async def fail_complete(*args: Any, **kwargs: Any) -> Any:
         raise AssertionError("clarify must not call the answer LLM")
@@ -223,7 +223,7 @@ async def test_clarify_when_ambiguous(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(pipeline, "retrieve", fake_retrieve)
     monkeypatch.setattr(pipeline, "complete", fail_complete)
 
-    answer, sources = await chat_once(None, store, "s1", "what is the approval limit?")
+    answer, sources = await chat_once(None, store, "s1", "what are the limits?")
     assert answer == prompts.CLARIFY_RESPONSE
     assert sources == []
     history = await store.history("s1")
@@ -234,7 +234,7 @@ async def test_no_clarify_when_confident(monkeypatch: pytest.MonkeyPatch) -> Non
     store = make_store()
 
     async def fake_retrieve(index: Any, query: str, **kwargs: Any) -> list[RetrievedChunk]:
-        return [_chunk("oracle.pdf", 0.95), _chunk("richmond.pdf", 0.40)]
+        return [_chunk("oracle.pdf", 0.95)]
 
     async def fake_complete(role: str, messages: Any, **kwargs: Any) -> Any:
         return FakeResponse("A confident answer [S1].")
@@ -250,7 +250,7 @@ async def test_no_clarify_when_doc_filter_set(monkeypatch: pytest.MonkeyPatch) -
     store = make_store()
 
     async def fake_retrieve(index: Any, query: str, **kwargs: Any) -> list[RetrievedChunk]:
-        return [_chunk("oracle.pdf", 0.45), _chunk("richmond.pdf", 0.40)]
+        return [_chunk("oracle.pdf", 0.32)]  # weak, but user chose the doc
 
     async def fake_complete(role: str, messages: Any, **kwargs: Any) -> Any:
         return FakeResponse("Scoped answer [S1].")
@@ -258,8 +258,8 @@ async def test_no_clarify_when_doc_filter_set(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(pipeline, "retrieve", fake_retrieve)
     monkeypatch.setattr(pipeline, "complete", fake_complete)
 
-    # user already scoped the document → no ambiguity to resolve
-    answer, _ = await chat_once(None, store, "s1", "approval limit?", doc_filter="oracle.pdf")
+    # user already scoped the document → answer within it, don't second-guess
+    answer, _ = await chat_once(None, store, "s1", "limits?", doc_filter="oracle.pdf")
     assert answer == "Scoped answer [S1]."
 
 

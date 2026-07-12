@@ -15,7 +15,7 @@ from core.index import IndexStore
 from core.llm import QuotaExceededError, complete, response_text, stream_deltas
 from core.logging import log_stage
 from core.models import embed_texts
-from core.retrieval import RetrievedChunk, is_ambiguous_across_documents, retrieve
+from core.retrieval import RetrievedChunk, is_low_confidence, retrieve
 from core.semcache import SemanticCache
 from core.sessions import SessionStore, Turn
 
@@ -190,9 +190,9 @@ async def prepare_turn(
     )
     if not chunks:
         return PreparedTurn(kind="refusal", answer=prompts.REFUSAL_RESPONSE, condensed_query=condensed)
-    # Ambiguous across both documents with no confident match → ask which one
-    # rather than assuming. Skipped when the user already scoped via doc_filter.
-    if settings.clarify_enabled and doc_filter is None and is_ambiguous_across_documents(chunks):
+    # Weak best match → ask the user to be more specific rather than answering
+    # from a shaky match. Skipped when the user already scoped via doc_filter.
+    if settings.clarify_enabled and doc_filter is None and is_low_confidence(chunks):
         log_stage(logger, "clarify requested", session_id=session_id, condensed=condensed)
         return PreparedTurn(
             kind="clarify", answer=prompts.CLARIFY_RESPONSE, condensed_query=condensed

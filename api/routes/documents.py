@@ -28,4 +28,8 @@ async def delete_document(
     deleted = await _index(request).delete_doc(doc_id)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Unknown document: {doc_id}")
+    # KB changed → orphan every cached answer
+    semcache = getattr(request.app.state, "semcache", None)
+    if semcache is not None:
+        await semcache.bump_kb_version()
     return DeletedResponse()

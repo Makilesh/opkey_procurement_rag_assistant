@@ -67,6 +67,13 @@ class Settings(BaseSettings):
     final_top_k: int = 4
     rrf_k: int = 60
 
+    # --- semantic cache (condensed-query → answer, saves LLM quota) ---
+    semcache_enabled: bool = True
+    # 0.97 on normalized bge-m3 embeddings ≈ near-exact paraphrases only.
+    semcache_threshold: float = 0.97
+    semcache_ttl_hours: int = 24
+    semcache_max_entries: int = 200
+
     # --- chunking ---
     chunk_target_tokens: int = 450
     chunk_overlap_ratio: float = 0.15

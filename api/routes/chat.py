@@ -26,14 +26,26 @@ async def chat(
 ):
     index = request.app.state.index
     store = request.app.state.sessions
+    cache = getattr(request.app.state, "semcache", None)
     # Sessions are stored under the JWT subject's namespace; the client keeps
     # using (and seeing) the raw session id it chose.
     scoped_id = scoped_session_id(user, body.session_id)
 
+    if body.doc_filter is not None:
+        known = {doc["filename"] for doc in index.list_docs()}
+        if body.doc_filter not in known:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unknown document filter: {body.doc_filter!r} — "
+                "use a source_filename from GET /documents",
+            )
+
     if body.stream:
         async def event_stream() -> AsyncIterator[str]:
             try:
-                async for event in chat_stream(index, store, scoped_id, body.message):
+                async for event in chat_stream(
+                    index, store, scoped_id, body.message, body.doc_filter, cache
+                ):
                     if "session_id" in event:
                         event["session_id"] = body.session_id
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
@@ -51,7 +63,9 @@ async def chat(
         )
 
     try:
-        answer, sources = await chat_once(index, store, scoped_id, body.message)
+        answer, sources = await chat_once(
+            index, store, scoped_id, body.message, body.doc_filter, cache
+        )
     except QuotaExceededError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return ChatResponse(

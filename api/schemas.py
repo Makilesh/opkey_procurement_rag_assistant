@@ -40,6 +40,11 @@ class ChatRequest(BaseModel):
     session_id: str = Field(min_length=1)
     message: str = Field(min_length=1)
     stream: bool = False
+    doc_filter: str | None = Field(
+        None,
+        description="Restrict retrieval to one document — a source_filename "
+        "from GET /documents. Omit to search all documents.",
+    )
 
 
 class ChatResponse(BaseModel):

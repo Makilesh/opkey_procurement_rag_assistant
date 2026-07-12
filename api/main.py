@@ -18,6 +18,7 @@ from core.config import settings
 from core.index import IndexStore
 from core.logging import setup_logging
 from core.models import get_embedder, run_in_embed_pool
+from core.semcache import SemanticCache
 from core.sessions import SessionStore
 
 logger = logging.getLogger("api")
@@ -44,6 +45,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _require_secure_jwt_secret()
     logger.info("starting api service")
     app.state.sessions = SessionStore.from_settings()
+    app.state.semcache = SemanticCache.from_settings()
     bootstrap_path = prepare_index_dir()
     app.state.index = IndexStore()
     ingest_task: asyncio.Task[None] | None = None

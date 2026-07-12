@@ -53,6 +53,10 @@ async def ingest_document(
         doc_id, chunks_created, pages = await index.ingest(filename, data)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    # KB changed → orphan every cached answer
+    semcache = getattr(request.app.state, "semcache", None)
+    if semcache is not None:
+        await semcache.bump_kb_version()
     log_stage(
         logger,
         "ingest complete",

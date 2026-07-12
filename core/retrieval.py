@@ -62,16 +62,33 @@ def rrf_fuse(rankings: list[list[str]], k: int) -> list[str]:
     return sorted(scores, key=lambda chunk_id: scores[chunk_id], reverse=True)
 
 
-async def retrieve(index: IndexStore, query: str) -> list[RetrievedChunk]:
-    """Return the top chunks passing the confidence gate (may be empty)."""
+async def retrieve(
+    index: IndexStore,
+    query: str,
+    *,
+    filenames: list[str] | None = None,
+    query_embedding: list[float] | None = None,
+) -> list[RetrievedChunk]:
+    """Return the top chunks passing the confidence gate (may be empty).
+
+    filenames restricts retrieval to specific source documents (both dense
+    and sparse legs). query_embedding lets callers that already embedded the
+    query (e.g. the semantic cache) avoid a second encoder pass."""
     started = time.perf_counter()
-    query_embedding = (await embed_texts([query]))[0]
-    embed_ms = round((time.perf_counter() - started) * 1000)
-    metrics.STAGE_LATENCY.labels("embed").observe(embed_ms / 1000)
+    if query_embedding is None:
+        query_embedding = (await embed_texts([query]))[0]
+        embed_ms = round((time.perf_counter() - started) * 1000)
+        metrics.STAGE_LATENCY.labels("embed").observe(embed_ms / 1000)
+    else:
+        embed_ms = 0  # embedded upstream; latency recorded there
 
     search_started = time.perf_counter()
-    dense = await run_in_embed_pool(index.dense_search_sync, query_embedding, settings.dense_top_k)
-    sparse = await run_in_embed_pool(index.sparse_search_sync, query, settings.sparse_top_k)
+    dense = await run_in_embed_pool(
+        index.dense_search_sync, query_embedding, settings.dense_top_k, filenames
+    )
+    sparse = await run_in_embed_pool(
+        index.sparse_search_sync, query, settings.sparse_top_k, filenames
+    )
     search_ms = round((time.perf_counter() - search_started) * 1000)
     metrics.STAGE_LATENCY.labels("search").observe(search_ms / 1000)
 
@@ -93,7 +110,12 @@ async def retrieve(index: IndexStore, query: str) -> list[RetrievedChunk]:
 
     scored = sorted(zip(candidates, scores, strict=True), key=lambda pair: pair[1], reverse=True)
     passing = [(c, s) for c, s in scored if s >= settings.min_rerank_score]
-    kept_pairs, diversified = select_with_document_diversity(passing, settings.final_top_k)
+    if filenames:
+        # Single-document context is the point of an explicit filter — the
+        # cross-document diversity guard must not undo it.
+        kept_pairs, diversified = passing[: settings.final_top_k], False
+    else:
+        kept_pairs, diversified = select_with_document_diversity(passing, settings.final_top_k)
     kept = [
         RetrievedChunk(id=c["id"], text=c["text"], metadata=c["metadata"], score=s)
         for c, s in kept_pairs

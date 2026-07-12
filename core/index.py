@@ -232,12 +232,16 @@ class IndexStore:
 
     # ---------- search primitives (used by core.retrieval) ----------
 
-    def dense_search_sync(self, query_embedding: list[float], k: int) -> list[dict[str, Any]]:
+    def dense_search_sync(
+        self, query_embedding: list[float], k: int, filenames: list[str] | None = None
+    ) -> list[dict[str, Any]]:
         if self.chunk_count() == 0:
             return []
+        where = {"source_filename": {"$in": filenames}} if filenames else None
         result = self._collection.query(
             query_embeddings=[query_embedding],
             n_results=min(k, self.chunk_count()),
+            where=where,
             include=["documents", "metadatas", "distances"],
         )
         return [
@@ -249,12 +253,31 @@ class IndexStore:
             for i in range(len(result["ids"][0]))
         ]
 
-    def sparse_search_sync(self, query: str, k: int) -> list[dict[str, Any]]:
+    def sparse_search_sync(
+        self, query: str, k: int, filenames: list[str] | None = None
+    ) -> list[dict[str, Any]]:
         if self._bm25 is None or not self._bm25_ids:
             return []
         scores = self._bm25.get_scores(_bm25_tokenize(query))
-        ranked = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:k]
-        top_ids = [self._bm25_ids[i] for i in ranked if scores[i] > 0]
+        # Chunk ids are "{doc_id}:{chunk_index}", so a filename filter maps to
+        # a doc_id prefix check via the registry — applied BEFORE cutting to k
+        # so the filter never starves the candidate list.
+        allowed_doc_ids: set[str] | None = None
+        if filenames:
+            allowed_doc_ids = {
+                doc_id
+                for doc_id, meta in self._registry.items()
+                if meta["filename"] in filenames
+            }
+        ranked = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
+        top_ids = []
+        for i in ranked:
+            if scores[i] <= 0 or len(top_ids) >= k:
+                break
+            chunk_id = self._bm25_ids[i]
+            if allowed_doc_ids is not None and chunk_id.split(":", 1)[0] not in allowed_doc_ids:
+                continue
+            top_ids.append(chunk_id)
         if not top_ids:
             return []
         data = self._collection.get(ids=top_ids, include=["documents", "metadatas"])

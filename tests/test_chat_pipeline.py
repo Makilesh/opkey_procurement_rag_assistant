@@ -69,7 +69,7 @@ async def test_first_turn_skips_condensation(monkeypatch: pytest.MonkeyPatch) ->
         condense_calls.append(message)
         return message
 
-    async def fake_retrieve(index: Any, query: str) -> list[RetrievedChunk]:
+    async def fake_retrieve(index: Any, query: str, **kwargs: Any) -> list[RetrievedChunk]:
         return [make_chunk()]
 
     monkeypatch.setattr(pipeline, "condense_query", fake_condense)
@@ -92,7 +92,7 @@ async def test_followup_invokes_condensation(monkeypatch: pytest.MonkeyPatch) ->
         condense_calls.append(message)
         return "purchase requisition approval limit"
 
-    async def fake_retrieve(index: Any, query: str) -> list[RetrievedChunk]:
+    async def fake_retrieve(index: Any, query: str, **kwargs: Any) -> list[RetrievedChunk]:
         retrieved_queries.append(query)
         return [make_chunk()]
 
@@ -108,7 +108,7 @@ async def test_followup_invokes_condensation(monkeypatch: pytest.MonkeyPatch) ->
 async def test_refusal_when_nothing_passes_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     store = make_store()
 
-    async def fake_retrieve(index: Any, query: str) -> list[RetrievedChunk]:
+    async def fake_retrieve(index: Any, query: str, **kwargs: Any) -> list[RetrievedChunk]:
         return []  # confidence gate rejected everything
 
     llm_calls: list[Any] = []
@@ -132,7 +132,7 @@ async def test_refusal_when_nothing_passes_gate(monkeypatch: pytest.MonkeyPatch)
 async def test_rag_answer_persists_turn_with_sources(monkeypatch: pytest.MonkeyPatch) -> None:
     store = make_store()
 
-    async def fake_retrieve(index: Any, query: str) -> list[RetrievedChunk]:
+    async def fake_retrieve(index: Any, query: str, **kwargs: Any) -> list[RetrievedChunk]:
         return [make_chunk()]
 
     async def fake_complete(role: str, messages: Any, **kwargs: Any) -> Any:
@@ -159,7 +159,7 @@ async def test_stream_disconnect_salvages_partial_turn(monkeypatch: pytest.Monke
     persist the user message and the partial answer."""
     store = make_store()
 
-    async def fake_retrieve(index: Any, query: str) -> list[RetrievedChunk]:
+    async def fake_retrieve(index: Any, query: str, **kwargs: Any) -> list[RetrievedChunk]:
         return [make_chunk()]
 
     async def fake_complete(role: str, messages: Any, **kwargs: Any) -> Any:
@@ -194,7 +194,7 @@ async def test_small_talk_persisted_and_no_retrieval(monkeypatch: pytest.MonkeyP
     store = make_store()
     retrieve_calls: list[str] = []
 
-    async def fake_retrieve(index: Any, query: str) -> list[RetrievedChunk]:
+    async def fake_retrieve(index: Any, query: str, **kwargs: Any) -> list[RetrievedChunk]:
         retrieve_calls.append(query)
         return []
 

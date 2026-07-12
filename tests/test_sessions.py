@@ -12,6 +12,7 @@ class FakeRedis:
     def __init__(self) -> None:
         self.lists: dict[str, list[str]] = {}
         self.hashes: dict[str, dict[str, str]] = {}
+        self.strings: dict[str, str] = {}
 
     async def ping(self) -> bool:
         return True
@@ -30,9 +31,36 @@ class FakeRedis:
             start = max(0, len(items) + start)
         return items[start:end]
 
-    async def hset(self, key: str, mapping: dict[str, str]) -> int:
-        self.hashes.setdefault(key, {}).update(mapping)
-        return len(mapping)
+    async def hset(
+        self,
+        key: str,
+        field: str | None = None,
+        value: str | None = None,
+        mapping: dict[str, str] | None = None,
+    ) -> int:
+        h = self.hashes.setdefault(key, {})
+        if mapping is not None:
+            h.update(mapping)
+            return len(mapping)
+        h[str(field)] = str(value)
+        return 1
+
+    async def get(self, key: str) -> str | None:
+        return self.strings.get(key)
+
+    async def incr(self, key: str) -> int:
+        self.strings[key] = str(int(self.strings.get(key, "0")) + 1)
+        return int(self.strings[key])
+
+    async def hlen(self, key: str) -> int:
+        return len(self.hashes.get(key, {}))
+
+    async def hdel(self, key: str, *fields: str) -> int:
+        h = self.hashes.get(key, {})
+        return sum(1 for f in fields if h.pop(f, None) is not None)
+
+    async def expire(self, key: str, seconds: int) -> bool:
+        return True  # TTLs are a no-op in the fake
 
     async def hsetnx(self, key: str, field: str, value: str) -> int:
         h = self.hashes.setdefault(key, {})

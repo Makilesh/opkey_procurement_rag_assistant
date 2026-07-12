@@ -9,6 +9,7 @@ from core.config import settings
 from core.sessions import SessionStore, scoped_session_id
 from tests.test_sessions import FakeRedis
 
+
 class FakeIndex:
     """Just enough index for routes that only read the registry
     (also satisfies /health, since `app` is shared across test modules)."""
@@ -126,6 +127,16 @@ def test_non_admin_cannot_ingest_or_delete_documents(monkeypatch) -> None:
     assert client.delete("/documents/any-doc-id", headers=headers).status_code == 403
     # read access to the shared knowledge base is NOT admin-gated
     assert client.get("/documents", headers=headers).status_code == 200
+
+
+def test_unknown_doc_filter_is_422() -> None:
+    resp = client.post(
+        "/chat",
+        headers=_auth_headers(),
+        json={"session_id": "s1", "message": "hi", "doc_filter": "nonexistent.pdf"},
+    )
+    assert resp.status_code == 422
+    assert "Unknown document filter" in resp.json()["detail"]
 
 
 def test_oversized_upload_is_413(monkeypatch) -> None:

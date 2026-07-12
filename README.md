@@ -189,6 +189,13 @@ in `ADMIN_USERNAMES`, default `demo`) · `404` unknown session or document · `4
   survive, with a **document-diversity guard** ensuring both documents are represented when
   both clear the gate. If nothing passes, the chatbot **refuses honestly** instead of
   calling the LLM with empty context.
+- **Clarify instead of assume.** Retrieval confidence drives a three-way decision, not
+  just answer-or-refuse: a confident top match (rerank ≥ `CLARIFY_MAX_SCORE`, 0.45) is
+  answered; nothing above the 0.25 gate is refused; and the band in between — a weak best
+  match, i.e. the query was probably too vague — triggers a short **clarifying question**
+  ("could you narrow it down — the Oracle guide or the Richmond policy?") rather than
+  answering from a shaky match. It fires only on genuinely vague queries (well-posed ones
+  rerank ~0.9+), and is skipped when the user has already scoped via the document filter.
 - **Document filters — user-controlled retrieval scope.** `/chat` accepts an optional
   `doc_filter` (a filename from `GET /documents`; unknown names get 422) that restricts
   both retrieval legs — a Chroma `where` clause on the dense side, a doc-id filter applied

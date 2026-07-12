@@ -10,11 +10,11 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from core import metrics, prompts
+from core.config import settings
 from core.index import IndexStore
 from core.llm import QuotaExceededError, complete, response_text, stream_deltas
 from core.logging import log_stage
 from core.models import embed_texts
-from core.config import settings
 from core.retrieval import RetrievedChunk, is_ambiguous_across_documents, retrieve
 from core.semcache import SemanticCache
 from core.sessions import SessionStore, Turn

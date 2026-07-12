@@ -190,6 +190,79 @@ async def test_stream_disconnect_salvages_partial_turn(monkeypatch: pytest.Monke
     assert history[1]["sources"][0]["tag"] == "S1"
 
 
+def _chunk(filename: str, score: float) -> RetrievedChunk:
+    return RetrievedChunk(
+        id=f"{filename}:0",
+        text="some text",
+        metadata={"source_filename": filename, "page_start": 1, "page_end": 1,
+                  "section_path": "", "doc_id": filename, "chunk_index": 0},
+        score=score,
+    )
+
+
+def test_ambiguous_signal() -> None:
+    from core.retrieval import is_ambiguous_across_documents
+
+    # split across both docs, both weak → ambiguous
+    assert is_ambiguous_across_documents([_chunk("a.pdf", 0.45), _chunk("b.pdf", 0.40)])
+    # a confident match, even split across docs → NOT ambiguous (answer it)
+    assert not is_ambiguous_across_documents([_chunk("a.pdf", 0.92), _chunk("b.pdf", 0.40)])
+    # weak but all from ONE doc → NOT ambiguous (not a which-document question)
+    assert not is_ambiguous_across_documents([_chunk("a.pdf", 0.45), _chunk("a.pdf", 0.40)])
+
+
+async def test_clarify_when_ambiguous(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = make_store()
+
+    async def fake_retrieve(index: Any, query: str, **kwargs: Any) -> list[RetrievedChunk]:
+        return [_chunk("oracle.pdf", 0.45), _chunk("richmond.pdf", 0.40)]
+
+    async def fail_complete(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("clarify must not call the answer LLM")
+
+    monkeypatch.setattr(pipeline, "retrieve", fake_retrieve)
+    monkeypatch.setattr(pipeline, "complete", fail_complete)
+
+    answer, sources = await chat_once(None, store, "s1", "what is the approval limit?")
+    assert answer == prompts.CLARIFY_RESPONSE
+    assert sources == []
+    history = await store.history("s1")
+    assert history is not None and len(history) == 2  # clarify turn still persisted
+
+
+async def test_no_clarify_when_confident(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = make_store()
+
+    async def fake_retrieve(index: Any, query: str, **kwargs: Any) -> list[RetrievedChunk]:
+        return [_chunk("oracle.pdf", 0.95), _chunk("richmond.pdf", 0.40)]
+
+    async def fake_complete(role: str, messages: Any, **kwargs: Any) -> Any:
+        return FakeResponse("A confident answer [S1].")
+
+    monkeypatch.setattr(pipeline, "retrieve", fake_retrieve)
+    monkeypatch.setattr(pipeline, "complete", fake_complete)
+
+    answer, _ = await chat_once(None, store, "s1", "what purchase order types exist?")
+    assert answer == "A confident answer [S1]."  # answered, not clarified
+
+
+async def test_no_clarify_when_doc_filter_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = make_store()
+
+    async def fake_retrieve(index: Any, query: str, **kwargs: Any) -> list[RetrievedChunk]:
+        return [_chunk("oracle.pdf", 0.45), _chunk("richmond.pdf", 0.40)]
+
+    async def fake_complete(role: str, messages: Any, **kwargs: Any) -> Any:
+        return FakeResponse("Scoped answer [S1].")
+
+    monkeypatch.setattr(pipeline, "retrieve", fake_retrieve)
+    monkeypatch.setattr(pipeline, "complete", fake_complete)
+
+    # user already scoped the document → no ambiguity to resolve
+    answer, _ = await chat_once(None, store, "s1", "approval limit?", doc_filter="oracle.pdf")
+    assert answer == "Scoped answer [S1]."
+
+
 async def test_small_talk_persisted_and_no_retrieval(monkeypatch: pytest.MonkeyPatch) -> None:
     store = make_store()
     retrieve_calls: list[str] = []
